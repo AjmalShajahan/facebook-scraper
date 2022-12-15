@@ -141,24 +141,23 @@ class FacebookScraper:
             if not elem:
                 logger.warning("No raw posts (<article> elements) were found in this page.")
             else:
-                comments_area = response.html.find('div.ufi', first=True)
-                if comments_area:
+                if comments_area := response.html.find('div.ufi', first=True):
                     # Makes likes/shares regexes work
                     try:
                         elem = utils.make_html_element(
-                            elem.html.replace("</footer>", comments_area.html + "</footer>")
+                            elem.html.replace(
+                                "</footer>", f"{comments_area.html}</footer>"
+                            )
                         )
                     except ValueError as e:
                         logger.debug(e)
 
                 if photo_post:
-                    post.update(
-                        extract_photo_post(
-                            elem,
-                            request_fn=self.get,
-                            options=options,
-                            full_post_html=response.html,
-                        )
+                    post |= extract_photo_post(
+                        elem,
+                        request_fn=self.get,
+                        options=options,
+                        full_post_html=response.html,
                     )
                 elif url.startswith(utils.urljoin(FB_MOBILE_BASE_URL, "/groups/")):
                     post.update(
@@ -200,9 +199,7 @@ class FacebookScraper:
 
     def get_friends(self, account, **kwargs) -> Iterator[Profile]:
         friend_opt = kwargs.get("friends")
-        limit = None
-        if type(friend_opt) in [int, float]:
-            limit = friend_opt
+        limit = friend_opt if type(friend_opt) in [int, float] else None
         friend_url = kwargs.pop("start_url", None)
         if not friend_url:
             friend_url = utils.urljoin(FB_MOBILE_BASE_URL, f'/{account}/friends/')
@@ -219,40 +216,31 @@ class FacebookScraper:
                     continue
                 # Tagline
                 tagline = elem.find("span.fcg", first=True)
-                if tagline:
-                    tagline = tagline.text
-                else:
-                    tagline = ""
+                tagline = tagline.text if tagline else ""
                 # Profile Picture
                 profile_picture = elem.find("i.profpic", first=True).attrs.get("style")
-                match = re.search(r"url\('(.+)'\)", profile_picture)
-                if match:
+                if match := re.search(r"url\('(.+)'\)", profile_picture):
                     profile_picture = utils.decode_css_url(match.groups()[0])
                 # User ID if present, not present if no "add friend"
                 user_id = elem.find("a.touchable[data-store]", first=True)
-                if user_id:
-                    user_id = json.loads(user_id.attrs["data-store"]).get("id")
-                else:
-                    user_id = ""
-
-                friend = {
+                user_id = json.loads(user_id.attrs["data-store"]).get("id") if user_id else ""
+                yield {
                     "id": user_id,
                     "link": name.attrs.get("href"),
                     "name": name.text,
                     "profile_picture": profile_picture,
                     "tagline": tagline,
                 }
-                yield friend
                 friends_found += 1
             if limit and friends_found > limit:
                 return
-            more = re.search(r'm_more_friends",href:"([^"]+)"', response.text)
-            if more:
-                friend_url = utils.urljoin(FB_MOBILE_BASE_URL, more.group(1))
-                if request_url_callback:
-                    request_url_callback(friend_url)
-            else:
+            if not (
+                more := re.search(r'm_more_friends",href:"([^"]+)"', response.text)
+            ):
                 return
+            friend_url = utils.urljoin(FB_MOBILE_BASE_URL, more[1])
+            if request_url_callback:
+                request_url_callback(friend_url)
 
     def get_collection(self, more_url, limit=None, **kwargs) -> Iterator[Profile]:
         request_url_callback = kwargs.get('request_url_callback')
@@ -276,7 +264,7 @@ class FacebookScraper:
                             r'("\\/timeline\\/app_collection\\/more\\/[^"]+")', action["code"]
                         )
                         if more_url:
-                            more_url = more_url.group(1)
+                            more_url = more_url[1]
                             more_url = json.loads(more_url)
             else:
                 elems = response.html.find('#timelineBody a.touchable')
@@ -284,7 +272,7 @@ class FacebookScraper:
                     r'href:"(/timeline/app_collection/more/[^"]+)"', response.text
                 )
                 if more_url:
-                    more_url = more_url.group(1)
+                    more_url = more_url[1]
             logger.debug(f"Found {len(elems)} elems")
             for elem in elems:
                 name = elem.find("strong", first=True).text
@@ -294,16 +282,14 @@ class FacebookScraper:
                 except:
                     tagline = None
                 profile_picture = elem.find("i.profpic", first=True).attrs.get("style")
-                match = re.search(r"url\('(.+)'\)", profile_picture)
-                if match:
+                if match := re.search(r"url\('(.+)'\)", profile_picture):
                     profile_picture = utils.decode_css_url(match.groups()[0])
-                result = {
+                yield {
                     "link": link,
                     "name": name,
                     "profile_picture": profile_picture,
                     "tagline": tagline,
                 }
-                yield result
                 count += 1
             if type(limit) in [int, float] and count > limit:
                 return
@@ -375,35 +361,30 @@ class FacebookScraper:
 
                     profile_photo = photo_links[1]
                     response = self.get(profile_photo.attrs.get("href"))
-                    result["profile_picture"] = extractor.extract_photo_link_HQ(
-                        response.html.html
-                    )
                 else:
                     result["cover_photo"] = None
                     profile_photo = photo_links[0]
                     response = self.get(profile_photo.attrs.get("href"))
                     extractor = PostExtractor(response.html, kwargs, self.get)
-                    result["profile_picture"] = extractor.extract_photo_link_HQ(
-                        response.html.html
-                    )
-            else:
-                cover_photo = response.html.find(
-                    "div[data-sigil='cover-photo']>i.img", first=True
+                result["profile_picture"] = extractor.extract_photo_link_HQ(
+                    response.html.html
                 )
-                if cover_photo:
-                    match = re.search(r"url\('(.+)'\)", cover_photo.attrs["style"])
-                    if match:
+            else:
+                if cover_photo := response.html.find(
+                    "div[data-sigil='cover-photo']>i.img", first=True
+                ):
+                    if match := re.search(
+                        r"url\('(.+)'\)", cover_photo.attrs["style"]
+                    ):
                         result["cover_photo"] = utils.decode_css_url(match.groups()[0])
-                profpic = response.html.find("img.profpic", first=True)
-                if profpic:
+                if profpic := response.html.find("img.profpic", first=True):
                     result["profile_picture"] = profpic.attrs["src"]
 
         about_url = utils.urljoin(FB_MOBILE_BASE_URL, f'/{account}/about/')
         logger.debug(f"Requesting page from: {about_url}")
         response = self.get(about_url)
-        match = re.search(r'entity_id:(\d+)', response.html.html)
-        if match:
-            result["id"] = match.group(1)
+        if match := re.search(r'entity_id:(\d+)', response.html.html):
+            result["id"] = match[1]
         # Profile name is in the title
         title = response.html.find("title", first=True).text
         if " | " in title:
@@ -524,11 +505,11 @@ class FacebookScraper:
                 )
             more_url = re.search(r'href:"(/timeline/app_collection/more/[^"]+)"', response.text)
             if more_url:
-                more_url = more_url.group(1)
+                more_url = more_url[1]
+            prefix_length = len('for (;;);')
             while more_url:
                 logger.debug(f"Fetching {more_url}")
                 response = self.get(more_url)
-                prefix_length = len('for (;;);')
                 data = json.loads(response.text[prefix_length:])  # Strip 'for (;;);'
                 for action in data['payload']['actions']:
                     if action['cmd'] == 'append' and action['html']:
@@ -544,11 +525,11 @@ class FacebookScraper:
                                 }
                             )
                     elif action['cmd'] == 'script':
-                        more_url = re.search(
-                            r'("\\/timeline\\/app_collection\\/more\\/[^"]+")', action["code"]
-                        )
-                        if more_url:
-                            more_url = more_url.group(1)
+                        if more_url := re.search(
+                            r'("\\/timeline\\/app_collection\\/more\\/[^"]+")',
+                            action["code"],
+                        ):
+                            more_url = more_url[1]
                             more_url = json.loads(more_url)
 
         return result
@@ -569,18 +550,17 @@ class FacebookScraper:
                         )
                         elems = element.find('#page_suggestions_on_liking ~ div')
                     elif action['cmd'] == 'script':
-                        more_url = re.search(
+                        if more_url := re.search(
                             r'see_more_cards_id","href":"([^"]+)"', action["code"]
-                        )
-                        if more_url:
-                            more_url = more_url.group(1)
+                        ):
+                            more_url = more_url[1]
                             more_url = utils.decode_css_url(more_url)
                             more_url = more_url.replace("\\", "")
             else:
                 elems = response.html.find('#page_suggestions_on_liking ~ div')
                 more_url = re.search(r'see_more_cards_id",href:"([^"]+)"', response.text)
                 if more_url:
-                    more_url = more_url.group(1)
+                    more_url = more_url[1]
 
             for elem in elems:
                 header_elem = elem.find("div[data-nt='FB:TEXT4']:has(span)", first=True)
@@ -594,8 +574,9 @@ class FacebookScraper:
                     user_url = utils.urljoin(FB_BASE_URL, links[0].attrs["href"])
                 else:
                     user_url = None
-                text_elem = elem.find("div[data-nt='FB:FEED_TEXT'] span p", first=True)
-                if text_elem:
+                if text_elem := elem.find(
+                    "div[data-nt='FB:FEED_TEXT'] span p", first=True
+                ):
                     text = text_elem.text
                 else:
                     text = None
@@ -628,13 +609,16 @@ class FacebookScraper:
             result["about"] = resp.html.find(
                 '#pages_msite_body_contents,div.aboutme', first=True
             ).text
-            cover_photo = resp.html.find("#msite-pages-header-contents i.coverPhoto", first=True)
-            if cover_photo:
-                match = re.search(r"url\('(.+)'\)", cover_photo.attrs["style"])
-                if match:
+            if cover_photo := resp.html.find(
+                "#msite-pages-header-contents i.coverPhoto", first=True
+            ):
+                if match := re.search(
+                    r"url\('(.+)'\)", cover_photo.attrs["style"]
+                ):
                     result["cover_photo"] = utils.decode_css_url(match.groups()[0])
-            profile_photo = resp.html.find("#msite-pages-header-contents img", first=True)
-            if profile_photo:
+            if profile_photo := resp.html.find(
+                "#msite-pages-header-contents img", first=True
+            ):
                 result["profile_photo"] = profile_photo.attrs["src"]
         except Exception as e:
             logger.error(e)
@@ -642,7 +626,7 @@ class FacebookScraper:
             url = f'/{page}/'
             logger.debug(f"Requesting page from: {url}")
             resp = self.get(url)
-            result["id"] = re.search(r'pages/transparency/(\d+)', resp.html.html).group(1)
+            result["id"] = re.search(r'pages/transparency/(\d+)', resp.html.html)[1]
             result["name"] = resp.html.find("title", first=True).text.replace(" - Home", "")
             desc = resp.html.find("meta[name='description']", first=True)
             ld_json = None
@@ -668,7 +652,7 @@ class FacebookScraper:
                     pass
             if ld_json:
                 meta = demjson.decode(ld_json)
-                result.update(meta["author"])
+                result |= meta["author"]
                 result["type"] = result.pop("@type")
                 for interaction in meta.get("interactionStatistic", []):
                     if interaction["interactionType"] == "http://schema.org/FollowAction":
@@ -688,8 +672,7 @@ class FacebookScraper:
                     )
                 if text.startswith("Price Range"):
                     result["Price Range"] = text.split(" · ")[-1]
-                link = elem.find("a[href]", first=True)
-                if link:
+                if link := elem.find("a[href]", first=True):
                     link = link.attrs["href"]
                     if "active_ads" in link:
                         result["active_ads_link"] = link
@@ -705,8 +688,7 @@ class FacebookScraper:
             logger.error(e)
         if desc:
             logger.debug(desc.attrs["content"])
-            match = re.search(r'\..+?(\d[\d,.]+).+·', desc.attrs["content"])
-            if match:
+            if match := re.search(r'\..+?(\d[\d,.]+).+·', desc.attrs["content"]):
                 result["likes"] = utils.parse_int(match.groups()[0])
             bits = desc.attrs["content"].split("·")
             if len(bits) == 3:

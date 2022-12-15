@@ -45,12 +45,13 @@ def set_cookies(cookies):
         cookies = cookiejar_from_dict(cookies)
     if cookies is not None:
         cookie_names = [c.name for c in cookies]
-        missing_cookies = [c for c in ['c_user', 'xs'] if c not in cookie_names]
-        if missing_cookies:
+        if missing_cookies := [
+            c for c in ['c_user', 'xs'] if c not in cookie_names
+        ]:
             raise exceptions.InvalidCookies(f"Missing cookies with name(s): {missing_cookies}")
         _scraper.session.cookies.update(cookies)
         if not _scraper.is_logged_in():
-            raise exceptions.InvalidCookies(f"Cookies are not valid")
+            raise exceptions.InvalidCookies("Cookies are not valid")
 
 
 def unset_cookies():
@@ -398,7 +399,7 @@ def write_posts_to_csv(
 
     # Set a default filename, based on the account name with the appropriate extension
     if filename is None:
-        filename = str(account or group) + "_posts." + kwargs.get("format")
+        filename = f"{str(account or group)}_posts." + kwargs.get("format")
 
     if encoding is None:
         encoding = locale.getpreferredencoding()
@@ -424,7 +425,7 @@ def write_posts_to_csv(
         try:
             with open(resume_file, "r") as f:
                 existing_url = f.readline().strip()
-            logger.debug("Existing URL:" + existing_url)
+            logger.debug(f"Existing URL:{existing_url}")
             if existing_url:
                 start_url = existing_url
         except FileNotFoundError:

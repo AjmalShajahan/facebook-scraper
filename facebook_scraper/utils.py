@@ -31,16 +31,17 @@ def parse_int(value: str) -> int:
 
 
 def convert_numeric_abbr(s):
-    mapping = {'k': 1000, 'm': 1e6}
     s = s.replace(",", "")
     if s[-1].isalpha():
+        mapping = {'k': 1000, 'm': 1e6}
         return int(float(s[:-1]) * mapping[s[-1].lower()])
     return int(s)
 
 
 def parse_duration(s) -> int:
-    match = re.search(r'T(?P<hours>\d+H)?(?P<minutes>\d+M)?(?P<seconds>\d+S)', s)
-    if match:
+    if match := re.search(
+        r'T(?P<hours>\d+H)?(?P<minutes>\d+M)?(?P<seconds>\d+S)', s
+    ):
         result = 0
         for k, v in match.groupdict().items():
             if v:
@@ -69,9 +70,7 @@ def filter_query_params(url, whitelist=None, blacklist=None) -> str:
     def is_valid_param(param):
         if whitelist is not None:
             return param in whitelist
-        if blacklist is not None:
-            return param not in blacklist
-        return True  # Do nothing
+        return param not in blacklist if blacklist is not None else True
 
     parsed_url = urlparse(url)
     query_params = parse_qsl(parsed_url.query)
@@ -83,7 +82,7 @@ def combine_url_params(url1, url2) -> str:
     parsed_url = urlparse(url1)
     parsed_url2 = urlparse(url2)
     query_params = parse_qsl(parsed_url.query) + parse_qsl(parsed_url2.query)
-    query_string = urlencode([(k, v) for k, v in query_params])
+    query_string = urlencode(list(query_params))
     return urlunparse(parsed_url._replace(query=query_string))
 
 
@@ -107,7 +106,7 @@ def remove_control_characters(html):
         # Compare the "invalid XML character range" numerically
         n = int(s, base)
         if (
-            n in (0xB, 0xC, 0xFFFE, 0xFFFF)
+            n in {0xB, 0xC, 0xFFFE, 0xFFFF}
             or 0x0 <= n <= 0x8
             or 0xE <= n <= 0x1F
             or 0xD800 <= n <= 0xDFFF
@@ -188,7 +187,9 @@ def parse_datetime(text: str, search=True) -> Optional[datetime]:
         The datetime object, or None if it couldn't find a date.
     """
     settings = {
-        'RELATIVE_BASE': datetime.today().replace(minute=0, hour=0, second=0, microsecond=0)
+        'RELATIVE_BASE': datetime.now().replace(
+            minute=0, hour=0, second=0, microsecond=0
+        )
     }
     if search:
         time_match = datetime_regex.search(text)
@@ -197,13 +198,12 @@ def parse_datetime(text: str, search=True) -> Optional[datetime]:
             text = time_match.group(0).replace("mth", "month")
         elif dow_match:
             text = dow_match.group(0)
-            today = calendar.day_abbr[datetime.today().weekday()]
+            today = calendar.day_abbr[datetime.now().weekday()]
             if text == today:
                 # Fix for dateparser misinterpreting "last Monday" as today if today is Monday
                 return dateparser.parse(text, settings=settings) - timedelta(days=7)
 
-    result = dateparser.parse(text, settings=settings)
-    if result:
+    if result := dateparser.parse(text, settings=settings):
         return result.replace(microsecond=0)
     return None
 

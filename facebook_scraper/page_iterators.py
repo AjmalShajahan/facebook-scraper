@@ -75,30 +75,29 @@ def generic_iter_pages(
 
     base_url = kwargs.get('base_url', FB_MOBILE_BASE_URL)
     request_url_callback = kwargs.get('request_url_callback')
+    RETRY_LIMIT = 6
     while next_url:
         # Execute callback of starting a new URL request
         if request_url_callback:
             request_url_callback(next_url)
 
-        RETRY_LIMIT = 6
         for retry in range(1, RETRY_LIMIT + 1):
             try:
                 logger.debug("Requesting page from: %s", next_url)
                 response = request_fn(next_url)
                 break
             except HTTPError as e:
-                if e.response.status_code == 500 and retry < RETRY_LIMIT:
-                    sleep_duration = retry * 2
-                    logger.debug(
-                        f"Caught exception, retry number {retry}. Sleeping for {sleep_duration}s"
-                    )
-                    if retry == (RETRY_LIMIT / 2):
-                        logger.debug("Requesting noscript")
-                        kwargs["scraper"].set_noscript(True)
-                    time.sleep(sleep_duration)
-                else:
+                if e.response.status_code != 500 or retry >= RETRY_LIMIT:
                     raise
 
+                sleep_duration = retry * 2
+                logger.debug(
+                    f"Caught exception, retry number {retry}. Sleeping for {sleep_duration}s"
+                )
+                if retry == (RETRY_LIMIT / 2):
+                    logger.debug("Requesting noscript")
+                    kwargs["scraper"].set_noscript(True)
+                time.sleep(sleep_duration)
         logger.debug("Parsing page response")
         parser = page_parser_cls(response)
 
@@ -109,10 +108,10 @@ def generic_iter_pages(
         yield page
 
         logger.debug("Looking for next page URL")
-        next_page = parser.get_next_page()
-        if next_page:
-            posts_per_page = kwargs.get("options", {}).get("posts_per_page")
-            if posts_per_page:
+        if next_page := parser.get_next_page():
+            if posts_per_page := kwargs.get("options", {}).get(
+                "posts_per_page"
+            ):
                 next_page = next_page.replace("num_to_fetch=4", f"num_to_fetch={posts_per_page}")
             next_url = utils.urljoin(base_url, next_page)
         else:
@@ -151,23 +150,19 @@ class PageParser:
     def get_next_page(self) -> Optional[URL]:
         assert self.cursor_blob is not None
 
-        match = self.cursor_regex.search(self.cursor_blob)
-        if match:
+        if match := self.cursor_regex.search(self.cursor_blob):
             return utils.unquote(match.groups()[0]).replace("&amp;", "&")
 
-        match = self.cursor_regex_2.search(self.cursor_blob)
-        if match:
+        if match := self.cursor_regex_2.search(self.cursor_blob):
             value = match.groups()[0]
             return utils.unquote(
                 value.encode('utf-8').decode('unicode_escape').replace('\\/', '/')
             ).replace("&amp;", "&")
 
-        match = self.cursor_regex_3.search(self.cursor_blob)
-        if match:
+        if match := self.cursor_regex_3.search(self.cursor_blob):
             return match.groups()[0]
 
-        match = self.cursor_regex_4.search(self.response.text)
-        if match:
+        if match := self.cursor_regex_4.search(self.response.text):
             value = match.groups()[0]
             return re.sub(r'\\+/', '/', value)
 
@@ -204,15 +199,17 @@ class PageParser:
                 # Due to malformed HTML served by Facebook, lxml might misinterpret where the footer should go in article elements
                 # If we limit the parsing just to the section element, it fixes it
                 # Please forgive me for parsing HTML with regex
-                logger.warning(f"No footer in article - reparsing HTML within <section> element")
-                html = re.search(r'<section.+?>(.+)</section>', raw_page.html).group(1)
+                logger.warning(
+                    "No footer in article - reparsing HTML within <section> element"
+                )
+                html = re.search(r'<section.+?>(.+)</section>', raw_page.html)[1]
                 raw_page = utils.make_html_element(html=html)
                 raw_posts = raw_page.find(selection)
                 break
 
         if not raw_posts:
             logger.warning(
-                "No raw posts (<%s> elements) were found in this page." % selection_name
+                f"No raw posts (<{selection_name}> elements) were found in this page."
             )
             if logger.isEnabledFor(logging.DEBUG):
                 content = textwrap.indent(
@@ -233,14 +230,12 @@ class GroupPageParser(PageParser):
     cursor_regex_3 = re.compile(r'href[=:]"(\/groups\/[^"]+bac=[^"]+)"')  # for Group requests
 
     def get_next_page(self) -> Optional[URL]:
-        next_page = super().get_next_page()
-        if next_page:
+        if next_page := super().get_next_page():
             return next_page
 
         assert self.cursor_blob is not None
 
-        match = self.cursor_regex_3.search(self.cursor_blob)
-        if match:
+        if match := self.cursor_regex_3.search(self.cursor_blob):
             value = match.groups()[0]
             return value.encode('utf-8').decode('unicode_escape').replace('\\/', '/')
 
@@ -259,12 +254,10 @@ class PhotosPageParser(PageParser):
 
     def get_next_page(self) -> Optional[URL]:
         if self.cursor_blob is not None:
-            match = self.cursor_regex.search(self.cursor_blob)
-            if match:
+            if match := self.cursor_regex.search(self.cursor_blob):
                 return match.groups()[0]
 
-            match = self.cursor_regex_2.search(self.cursor_blob)
-            if match:
+            if match := self.cursor_regex_2.search(self.cursor_blob):
                 value = match.groups()[0]
                 return value.encode('utf-8').decode('unicode_escape').replace('\\/', '/')
 
@@ -275,12 +268,10 @@ class SearchPageParser(PageParser):
 
     def get_next_page(self) -> Optional[URL]:
         if self.cursor_blob is not None:
-            match = self.cursor_regex.search(self.cursor_blob)
-            if match:
+            if match := self.cursor_regex.search(self.cursor_blob):
                 return match.groups()[0]
 
-            match = self.cursor_regex_2.search(self.cursor_blob)
-            if match:
+            if match := self.cursor_regex_2.search(self.cursor_blob):
                 value = match.groups()[0]
                 return value.encode('utf-8').decode('unicode_escape').replace('\\/', '/')
 
@@ -294,8 +285,7 @@ class HashtagPageParser(PageParser):
     def get_next_page(self) -> Optional[URL]:
         assert self.cursor_blob is not None
 
-        match = self.cursor_regex.search(self.cursor_blob)
-        if match:
+        if match := self.cursor_regex.search(self.cursor_blob):
             return utils.unquote(match.groups()[0]).replace("&amp;", "&")
 
         return None
